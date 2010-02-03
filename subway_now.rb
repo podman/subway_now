@@ -43,7 +43,7 @@ require 'logger'
 class App
   VERSION = '0.0.1'
   EMAIL = ''
-  PASSWORD =''
+  PASSWORD = ''
   
   attr_reader :options
 

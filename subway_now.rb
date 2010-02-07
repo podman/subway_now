@@ -38,13 +38,14 @@ require 'date'
 require 'mechanize'
 require 'text/highlight'
 require 'logger'
+require 'yaml'
+require 'subway'
+
 
 
 class App
   VERSION = '0.0.1'
-  EMAIL = ''
-  PASSWORD = ''
-  
+    
   attr_reader :options
 
   def initialize(arguments, stdin)
@@ -56,8 +57,9 @@ class App
     @options.verbose = false
     @options.quiet = false
     
-    @agent = WWW::Mechanize.new { |obj| obj.log = Logger.new('subway.log') }
-    @favs = []
+    config = YAML::load(open('.subwayrc').read)
+        
+    @subway = Subway.new(config["email"], config["password"])
     
     hl = Text::ANSIHighlighter.new
     String.highlighter = hl
@@ -139,12 +141,9 @@ class App
     end
     
     def process_command
-      get_favorites
       
       unless @options.favorite
-        @favs.each do |fav|
-          puts fav[:text]
-        end
+        output_favorites
         puts '----------------------------------------------------------------------------------'.bold
         print 'Enter Favorite #: '
         @options.favorite = gets 
@@ -155,56 +154,21 @@ class App
       
     end
     
-    def get_favorites
-      home_page = @agent.get('http://subwaynow.com')
+    def output_favorites
+      @subway.favorites.each do |favorite|
+        str = "#{favorite[:id]} ".red.bold
+        str += "#{favorite[:desc]}".yellow.bold
+        str += "\n  Location: #{favorite[:location]}"
 
-      login_form = home_page.forms.first
-
-      login_form.User = EMAIL
-      login_form.password = PASSWORD
-
-      redirect_page = @agent.submit(login_form, login_form.buttons.first)
-
-
-      fav_page = redirect_page.links.first.click
-
-      fav_trs = fav_page.search('#HomeFaves table tr')
-
-      fav_trs.each do |tr|
-        tds = tr.search('td')
-        fav = "#{tds[1].inner_text} ".red.bold
-
-        info_td = tds[2]
-
-        fav_link_info = info_td.search('.FaveName a').first
-        fav += "#{fav_link_info.inner_text}".yellow.bold
-
-        fav_link_href = fav_link_info.attributes['href'].value
-        
-        fav_link = nil
-        
-        fav_page.links.each do |link|
-          if link.href == fav_link_href
-            fav_link = link 
-            break
-          end
+        favorite[:products].each do |product|
+          str += "\n  #{product}"
         end
-
-        fav += "\n  Location: " + info_td.search('.VendorName').first.inner_text
-
-        info_td.search('.FaveProducts li').each do |fave|
-          fav += "\n  " + fave.inner_text
-        end
-
-        @favs.push({:text => fav, :link => fav_link})
-
+        puts str
       end
-
     end
     
     def click_favorite(idx)
-      order_page = @favs[idx][:link].click
-      data = order_page.search('.CheckoutList td')
+      data = @subway.begin_order_favorite(idx)
       str = ""
       
       tab_position = 0
@@ -213,65 +177,61 @@ class App
       first_total = true
       
       data.each do |d|
-        if d.attributes['class'].value == 'product'
-           str = "\n#{d.inner_text}".bold.red
-           tab_position = d.inner_text.size
-        elsif d.attributes['class'].value == 'product money'
-          val = d.inner_text.match(/(\d+\.\d+)+/)[1]
-          str += "\t $#{val}".green
-          puts str
-          str = ""
-        elsif d.attributes['class'].value == 'optioncheck'
-          puts "    #{d.inner_text}".green
-        elsif d.attributes['class'].value == 'summary'
-          if first_summary
-            puts '----------------------------------------------------------------------------------'
-            first_summary = false
-          end
-          val = "    #{d.inner_text}"
-          while val.length < tab_position
-            val += " "
-          end 
-          str = val.green.bold
-        elsif d.attributes['class'].value == 'summary money'
-          str += "\t #{d.inner_text}"
-          puts str
-          str = ""
-        elsif d.attributes['class'].value == 'total'
-          if first_total
-            first_total = false
-            puts '----------------------------------------------------------------------------------'.bold
-          end
-          val = "    #{d.inner_text}"
-          while val.length < tab_position
-            val += " "
-          end 
-          str = val.cyan.bold
-        elsif d.attributes['class'].value == 'total money'
-          str += "\t #{d.inner_text}".cyan.bold
-          puts str
-          str = ""
+        case d[:type]
+          when :product
+            str = "\n#{d[:value]}".bold.red
+            tab_position = d[:value].size
+          when :product_money
+            str += "\t $#{d[:value]}".green
+            puts str
+            str = ""
+          when :option
+            puts "    #{d[:value]}".green
+          when :summary
+            if first_summary
+              puts '----------------------------------------------------------------------------------'
+              first_summary = false
+            end
+            val = "    #{d[:value]}"
+            while val.length < tab_position
+              val += " "
+            end 
+            str = val.green.bold
+          when :summary_money
+            str += "\t #{d[:value]}"
+            puts str
+            str = ""
+          when :total
+            if first_total
+              first_total = false
+              puts '----------------------------------------------------------------------------------'.bold
+            end
+            val = "    #{d[:value]}"
+            while val.length < tab_position
+              val += " "
+            end 
+            str = val.cyan.bold
+          when :total_money
+            str += "\t #{d[:value]}".cyan.bold
+            puts str
+            str = ""
         end
       end
-      
-      pickup_form = order_page.form('aspnetForm')
-      pickup_form.radiobuttons.first.checked = true
-      
-      order_form = order_page.form('frmCheckout')
       
       puts "\n"
       print "Are you sure you want to order this? [Y/n]: "
       order = gets
       
+      result = false
+      
       if (order.strip == 'Y' || order.strip == 'y')
-        do_order(order_form)
+        result = @subway.complete_order
       end
       
-    end
-    
-    def do_order(form)
-      #page = @agent.submit(form, form.buttons.last)
-      puts "\nSuccess! Check your email or SMS for confirmation of your order.".yellow.bold
+      if result
+        puts "\nSuccess! Check your email or SMS for confirmation of your order.".yellow.bold
+      end
+      
     end
     
 end

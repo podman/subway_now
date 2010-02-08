@@ -230,6 +230,8 @@ class App
       
       if result
         puts "\nSuccess! Check your email or SMS for confirmation of your order.".yellow.bold
+      else
+        puts "\nOh no! There was an error.".red.bold
       end
       
     end

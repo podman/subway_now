@@ -59,8 +59,12 @@ class Subway
 
     order_form = @order_page.form('frmCheckout')
 
-    #page = @agent.submit(form, form.buttons.last)
-    return true
+    @order_result = @agent.submit(order_form, order_form.buttons.last)
+    if @order_result.uri.to_s == 'http://www.subwaynow.com/Order/ThankYou.aspx'
+      return true
+    else
+      return false
+    end
   end
   
   private
